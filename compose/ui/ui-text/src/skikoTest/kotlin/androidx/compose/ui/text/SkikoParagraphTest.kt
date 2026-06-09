@@ -17,6 +17,10 @@
 package androidx.compose.ui.text
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.text.font.createFontFamilyResolver
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
@@ -30,6 +34,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import kotlinx.test.IgnoreJsTarget
 import kotlinx.test.IgnoreWasmTarget
 
@@ -474,6 +479,53 @@ class SkikoParagraphTest {
                 paragraph.getCursorRect(offset)
             }
         }
+    }
+
+    // Regression test for https://youtrack.jetbrains.com/issue/CMP-8469
+    // Skia includes the trailing letter spacing in the line width it centres on, which made
+    // centred text render shifted left by letterSpacing / 2. Unlike getRectsForRange (whose box
+    // includes that phantom trailing space and is centred regardless), this inspects the actually
+    // painted glyph pixels.
+    @Test
+    @IgnoreJsTarget
+    @IgnoreWasmTarget
+    fun centeredText_withLetterSpacing_isPaintedCentered() {
+        val width = 400
+        val height = 80
+        val paragraph = Paragraph(
+            text = "WW",
+            style = TextStyle(
+                textAlign = TextAlign.Center,
+                letterSpacing = 40.sp,
+                fontSize = 40.sp,
+                color = Color.Black
+            ),
+            constraints = Constraints(maxWidth = width),
+            density = defaultDensity,
+            fontFamilyResolver = fontFamilyResolver
+        )
+
+        val bitmap = ImageBitmap(width, height)
+        paragraph.paint(Canvas(bitmap))
+
+        val pixels = bitmap.toPixelMap()
+        var minInkX = Int.MAX_VALUE
+        var maxInkX = Int.MIN_VALUE
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                if (pixels[x, y].alpha > 0.5f) {
+                    if (x < minInkX) minInkX = x
+                    if (x > maxInkX) maxInkX = x
+                }
+            }
+        }
+        assertTrue(maxInkX > minInkX, "expected some painted glyph pixels")
+
+        // Without the fix the ink is shifted left by letterSpacing / 2 (= 20px here); with it the
+        // painted glyphs are centred. Tolerance leaves room for per-target default-font metrics
+        // while staying far below the 20px regression.
+        val inkCenter = (minInkX + maxInkX) / 2f
+        assertEquals(width / 2f, inkCenter, absoluteTolerance = 4f)
     }
 
     private fun simpleParagraph(text: String, textStyle: TextStyle = TextStyle()) = Paragraph(
